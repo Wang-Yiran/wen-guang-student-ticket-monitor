@@ -469,7 +469,7 @@ def run_loop(config):
     log("=" * 50)
     log("上海文化广场学生票监控器已启动 (API版)")
     log(f"   间隔: {config['check_interval_seconds']} 秒")
-    log(f"   演出: 自动发现（当前 {len(config.get("performances",[]))} 个配置）")
+    log(f"   演出: 自动发现（当前 {len(config.get('performances',[]))} 个配置）")
     pp = len(config.get("pushplus_tokens", [])) or (1 if config.get("pushplus_token") else 0)
     log(f"   推送: PushPlus={pp}人, Server酱, 企微群")
     log("=" * 50)
