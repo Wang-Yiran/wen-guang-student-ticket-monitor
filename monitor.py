@@ -33,7 +33,7 @@ STATE_FILE = "last_state.json"
 LOG_FILE = "monitor.log"
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='【%(levelname)5s】[%(asctime)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
@@ -454,7 +454,9 @@ def check_once(config):
             elif c["type"] == "sold_out":
                 title = f"[售罄] {c['name']} 学生票"
                 content = f"<p>{c['detail']}</p>"
-                send_notification(config, title, content)
+                logging.debug(json.dumps(content))
+                # 售罄不通知
+                # send_notification(config, title, content)
             # 余票数量变化、新增场次等中间状态一律不通知
     else:
         logging.info("[状态] 无变化")
