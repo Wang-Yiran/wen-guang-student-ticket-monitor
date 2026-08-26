@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 上海文化广场 - 学生票监控器 (API版)
 ==========================================
@@ -26,9 +26,23 @@ from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 
+import logging
+
 CONFIG_FILE = "config.json"
 STATE_FILE = "last_state.json"
 LOG_FILE = "monitor.log"
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='【%(levelname)5s】[%(asctime)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+# logging.info("test中文输出")
+
 
 HOMEPAGE = "https://www.shcstheatre.com/"
 API_PROGRAM = "https://www.shcstheatre.com/webapi.ashx?op=Gettblprogram"
@@ -118,7 +132,7 @@ def scrape_performances(session, timeout=15):
             result.append({"name": name, "article_id": aid, "enabled": True})
         return result
     except Exception as e:
-        log(f"[抓取] 节目列表失败: {e}")
+        logging.info(f"[抓取] 节目列表失败: {e}")
         return []
 
 def is_quiet_hours(config):
@@ -132,16 +146,30 @@ def is_quiet_hours(config):
     return now >= s or now <= e
 
 def check_performance(session, perf, timeout=15):
+    
     """检查单个演出的学生票"""
     name = perf.get("name", "?")
     aid = perf.get("article_id", "")
+    head = {
+        "User-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Referer":"https://www.shcstheatre.com/Program/ProgramDetails.aspx?headtype=YanChu&ARTICLE_ID=" + aid + "&id="+ aid,
+        "x-requested-with":"XMLHttpRequest",
+        "Accept":"*/*",
+        "Accept-Encoding":"gzip, deflate, br",
+        "Connection":"keep-alive"
+               }
+    logging.debug("检查请求的perf: " + json.dumps(perf))
+
     try:
-        r = session.post(API_PROGRAM, data={"id": aid}, timeout=timeout)
+        r = session.post(API_PROGRAM, data={"id": aid}, headers=head,timeout=timeout)
         data = r.json()
     except Exception as e:
+        logging.error("请求报错:" + name + "\n" + str(e))
         return {"name": name, "error": str(e), "student_tickets": []}
     if data.get("code") != 0:
+        logging.error("返回码不为0,报错:" + name + " code: " + str(data.get("code")))
         return {"name": name, "error": data.get("msg","?"), "student_tickets": []}
+    logging.debug("打印响应: ", data)
     events = data.get("data", {}).get("TBLEVENT", [])
     if not events:
         return {"name": name, "error": "无场次", "student_tickets": []}
@@ -151,11 +179,12 @@ def check_performance(session, perf, timeout=15):
         eid = evt.get("I_EVENT_ID")
         dt = evt.get("DT_EVENT_DATETIME", "?")
         try:
-            r2 = session.post(API_PRICE, data={"I_EVENT_ID": eid}, timeout=timeout)
+            r2 = session.post(API_PRICE, data={"I_EVENT_ID": eid}, headers=head, timeout=timeout)
             prices = r2.json()
         except:
             continue
         if prices.get("code") != 0:
+            logging.error("查询余票报错! " + name + "I_EVENT_ID:" + str(eid))
             continue
         for p in prices.get("data", []):
             desc = (p.get("VC_PRICEDESC") or "").strip()
@@ -177,9 +206,9 @@ def check_all(config):
     # 自动抓取节目列表
     auto_list = scrape_performances(session, config.get("request_timeout_seconds", 15))
     if auto_list:
-        log(f"[发现] 共 {len(auto_list)} 个演出")
+        logging.info(f"[发现] 共 {len(auto_list)} 个演出")
     else:
-        log(f"[警告] 无法获取节目列表，使用配置中的演出")
+        logging.info(f"[警告] 无法获取节目列表，使用配置中的演出")
         auto_list = config.get("performances", [])
     
     # 合并用户配置（可覆盖 enabled 状态）
@@ -200,7 +229,7 @@ def check_all(config):
         if not perf.get("enabled", True):
             continue
         name = perf.get("name", "?")
-        log(f"  检查: {name}...")
+        logging.info(f"  检查: {name}...")
         r = check_performance(session, perf, config.get("request_timeout_seconds", 15))
         results.append(r)
         tix = r.get("student_tickets", [])
@@ -208,15 +237,15 @@ def check_all(config):
         sold = [t for t in tix if t["sold_out"] or t["seat_cnt"] == 0]
         total_seats = sum(t["seat_cnt"] for t in avail)
         if r.get("error"):
-            log(f"    [{name}] 错误: {r['error']}")
+            logging.info(f"    [{name}] 错误: {r['error']}")
         elif tix:
-            log(f"    [{name}] 学生票 {len(tix)}场 (可购:{len(avail)}场/{total_seats}张  售罄:{len(sold)}场)")
+            logging.info(f"    [{name}] 学生票 {len(tix)}场 (可购:{len(avail)}场/{total_seats}张  售罄:{len(sold)}场)")
             for t in avail:
-                log(f"      >>> 可购  {t['datetime'][:10]} {t['price']}元 {t['desc']} ({t['seat_cnt']}张)")
+                logging.info(f"      >>> 可购  {t['datetime'][:10]} {t['price']}元 {t['desc']} ({t['seat_cnt']}张)")
             for t in sold:
-                log(f"      --- 售罄  {t['datetime'][:10]} {t['price']}元 {t['desc']}")
+                logging.info(f"      --- 售罄  {t['datetime'][:10]} {t['price']}元 {t['desc']}")
         else:
-            log(f"    [{name}] 无学生票档位")
+            logging.info(f"    [{name}] 无学生票档位")
     return results
 
 def detect_changes(results):
@@ -296,12 +325,12 @@ def send_pushplus(token, title, content):
         }, timeout=10)
         result = r.json()
         if result.get("code") == 200:
-            log(f"[推送] PushPlus({token[:8]}...) 成功")
+            logging.info(f"[推送] PushPlus({token[:8]}...) 成功")
             return True
         else:
-            log(f"[推送] PushPlus 失败: {result.get('msg','?')}")
+            logging.info(f"[推送] PushPlus 失败: {result.get('msg','?')}")
     except Exception as e:
-        log(f"[推送] PushPlus 异常: {e}")
+        logging.info(f"[推送] PushPlus 异常: {e}")
     return False
 
 def send_serverchan(key, title, content):
@@ -310,12 +339,12 @@ def send_serverchan(key, title, content):
         r = requests.post(url, data={"title": title, "desp": content}, timeout=10)
         result = r.json()
         if result.get("code") == 0:
-            log(f"[推送] Server酱({key[:8]}...) 成功")
+            logging.info(f"[推送] Server酱({key[:8]}...) 成功")
             return True
         else:
-            log(f"[推送] Server酱 失败: {result.get('message','?')}")
+            logging.info(f"[推送] Server酱 失败: {result.get('message','?')}")
     except Exception as e:
-        log(f"[推送] Server酱 异常: {e}")
+        logging.info(f"[推送] Server酱 异常: {e}")
     return False
 
 def send_wechat_work(webhook, title, content):
@@ -330,12 +359,12 @@ def send_wechat_work(webhook, title, content):
         }, timeout=10)
         result = r.json()
         if result.get("errcode") == 0:
-            log(f"[推送] 企微群机器人 成功")
+            logging.info(f"[推送] 企微群机器人 成功")
             return True
         else:
-            log(f"[推送] 企微群机器人 失败: {result.get('errmsg','?')}")
+            logging.info(f"[推送] 企微群机器人 失败: {result.get('errmsg','?')}")
     except Exception as e:
-        log(f"[推送] 企微群机器人 异常: {e}")
+        logging.info(f"[推送] 企微群机器人 异常: {e}")
     return False
 
 
@@ -361,17 +390,17 @@ def send_email(config, title, content):
         with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
             server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, to_list, msg.as_string())
-        log(f"[推送] 邮件成功 -> {', '.join(to_list)}")
+        logging.info(f"[推送] 邮件成功 -> {', '.join(to_list)}")
         return True
     except Exception as e:
-        log(f"[推送] 邮件失败: {e}")
+        logging.info(f"[推送] 邮件失败: {e}")
     return False
 
 
 def send_notification(config, title, content):
     """发送所有已配置的推送（支持多人）"""
     if is_quiet_hours(config):
-        log(f"[推送] 静默时段，跳过")
+        logging.info(f"[推送] 静默时段，跳过")
         return
 
     # PushPlus tokens（数组，支持多人；兼容旧版单 token）
@@ -410,14 +439,14 @@ def send_notification(config, title, content):
 # ============================================================
 
 def check_once(config):
-    log("=" * 40)
-    log("[检查] 开始检查...")
+    logging.info("=" * 40)
+    logging.info("[检查] 开始检查...")
     results = check_all(config)
     changes = detect_changes(results)
 
     if changes:
         for c in changes:
-            log(f"[变化] {c['type']}: {c['name']}")
+            logging.info(f"[变化] {c['type']}: {c['name']}")
             if c["type"] == "new_tickets":
                 title = f"[有票!] {c['name']} 学生票可购"
                 content = f"<h3>{c['name']} 学生票!</h3><pre>{c['detail']}</pre><p>请尽快登录购票!</p>"
@@ -428,7 +457,7 @@ def check_once(config):
                 send_notification(config, title, content)
             # 余票数量变化、新增场次等中间状态一律不通知
     else:
-        log("[状态] 无变化")
+        logging.info("[状态] 无变化")
 
     return results, changes
 
@@ -466,13 +495,13 @@ def show_status(config):
     print("")
 
 def run_loop(config):
-    log("=" * 50)
-    log("上海文化广场学生票监控器已启动 (API版)")
-    log(f"   间隔: {config['check_interval_seconds']} 秒")
-    log(f"   演出: 自动发现（当前 {len(config.get('performances',[]))} 个配置）")
+    logging.info("=" * 50)
+    logging.info("上海文化广场学生票监控器已启动 (API版)")
+    logging.info(f"   间隔: {config['check_interval_seconds']} 秒")
+    logging.info(f"   演出: 自动发现（当前 {len(config.get('performances',[]))} 个配置）")
     pp = len(config.get("pushplus_tokens", [])) or (1 if config.get("pushplus_token") else 0)
-    log(f"   推送: PushPlus={pp}人, Server酱, 企微群")
-    log("=" * 50)
+    logging.info(f"   推送: PushPlus={pp}人, Server酱, 企微群")
+    logging.info("=" * 50)
 
     check_once(config)
     interval = config["check_interval_seconds"]
@@ -482,18 +511,20 @@ def run_loop(config):
             config = load_config()
             interval = config["check_interval_seconds"]
             next_ts = datetime.fromtimestamp(time.time() + interval).strftime("%H:%M:%S")
-            log(f"[下次] {next_ts}")
+            logging.info(f"[下次] {next_ts}")
             time.sleep(interval + random.randint(-5, 5))
             check_once(config)
         except KeyboardInterrupt:
-            log("监控已停止")
+            logging.info("监控已停止")
             break
         except Exception as e:
-            log(f"[错误] {e}")
+            logging.info(f"[错误] {e}")
             time.sleep(60)
 
 def main():
     config = load_config()
+    #logging.info(f"print kitty email!!!!!!")
+    #send_email(config, "wo ai kitty", "lovely kitty")
     if "--test-push" in sys.argv:
         print("Running real check and sending to phone...")
         results, changes = check_once(config)
