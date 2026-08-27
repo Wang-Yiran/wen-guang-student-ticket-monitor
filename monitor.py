@@ -113,7 +113,13 @@ def save_state(state):
 def fetch_with_session(timeout=15):
     s = requests.Session()
     s.get(HOMEPAGE, timeout=timeout,
-          headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+          headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer":"https://www.shcstheatre.com/",
+        "x-requested-with":"XMLHttpRequest",
+        "Accept":"*/*",
+        "Accept-Encoding":"gzip, deflate, br",
+        "Connection":"keep-alive"
+                   })
     return s
 
 def scrape_performances(session, timeout=15):
@@ -212,18 +218,23 @@ def check_all(config):
         auto_list = config.get("performances", [])
     
     # 合并用户配置（可覆盖 enabled 状态）
+    logging.debug("获取的配置:" + json.dumps(config.get("performances"), ensure_ascii=False))
+    logging.debug("autoList:" + json.dumps(auto_list, ensure_ascii=False))
     manual = {p["article_id"]: p for p in config.get("performances", [])}
+    logging.debug("打印取到的manual:" + json.dumps(manual, ensure_ascii=False))
+
     performances = []
     for p in auto_list:
         aid = p["article_id"]
         if aid in manual:
             p["enabled"] = manual[aid].get("enabled", True)
-        performances.append(p)
+            performances.append(p)
     # 添加仅存在于配置中的演出
     for aid, mp in manual.items():
         if aid not in {p["article_id"] for p in performances}:
             performances.append(mp)
     
+    logging.debug("打印过滤后的演出列表，performances:" + json.dumps(performances, ensure_ascii=False))
     results = []
     for perf in performances:
         if not perf.get("enabled", True):
